@@ -73,8 +73,9 @@ class Robot:
         self.constant_thrust = 10e-4
         self.constant_drag = 10e-6
         self.omega_motors = np.array([0.0, 0.0, 0.0, 0.0])
-        self.state = self.reset_state_and_input(np.array([1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0, 0.0]))
+        self.state = self.reset_state_and_input(np.array([0.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0, 0.0]))
         self.time = 0.0
+        self.a_adapt = np.array([0.0, 0.0, 0.0])
 
     def reset_state_and_input(self, init_xyz, init_quat_wxyz):
         state0 = np.zeros(NO_STATES)
@@ -84,7 +85,7 @@ class Robot:
         state0[IDX_OMEGA_X:IDX_OMEGA_Z+1] = np.array([0.0, 0.0, 0.0])
         return state0
 
-    def update(self, omegas_motor, dt):
+    def update(self, omegas_motor, dt, F_wind=np.zeros(3)):
         p_I = self.state[IDX_POS_X:IDX_POS_Z+1]
         v_I = self.state[IDX_VEL_X:IDX_VEL_Z+1]
         q = self.state[IDX_QUAT_W:IDX_QUAT_Z+1]
@@ -93,13 +94,14 @@ class Robot:
 
         thrust = self.constant_thrust * np.sum(omegas_motor**2)
         f_b = np.array([0, 0, thrust])
+
         
         tau_x = self.constant_thrust * (omegas_motor[3]**2 - omegas_motor[1]**2) * 2 * self.arm_length
         tau_y = self.constant_thrust * (omegas_motor[2]**2 - omegas_motor[0]**2) * 2 * self.arm_length
         tau_z = self.constant_drag * (omegas_motor[0]**2 - omegas_motor[1]**2 + omegas_motor[2]**2 - omegas_motor[3]**2)
         tau_b = np.array([tau_x, tau_y, tau_z])
 
-        v_dot = 1 / self.m * R @ f_b + np.array([0, 0, -9.81])
+        v_dot = 1 / self.m * (R @ f_b) + np.array([0, 0, -9.81]) + 1/self.m * F_wind
         omega_dot = self.J_inv @ (np.cross(self.J @ omega, omega) + tau_b)
         q_dot = 1 / 2 * quat_mult(q, [0, *omega])
         p_dot = v_I
@@ -109,7 +111,7 @@ class Robot:
         self.state[IDX_QUAT_W:IDX_QUAT_Z+1] /= np.linalg.norm(self.state[IDX_QUAT_W:IDX_QUAT_Z+1]) # Re-normalize quaternion.
         self.time += dt
 
-    def control(self, p_d_I):
+    def control(self, p_d_I, v_d_I=None):
         p_I = self.state[IDX_POS_X:IDX_POS_Z+1]
         v_I = self.state[IDX_VEL_X:IDX_VEL_Z+1]
         q = self.state[IDX_QUAT_W:IDX_QUAT_Z+1]
@@ -118,8 +120,12 @@ class Robot:
         # Position controller.
         k_p = 1.0
         k_d = 10.0
-        v_r = - k_p * (p_I - p_d_I)
-        a = -k_d * (v_I - v_r) + np.array([0, 0, 9.81])
+        k_I = 5.0
+        v_d_I = np.zeros(3) # TODO: add this in from the trajectory, take the derivative of the pos
+        v_r = v_d_I - k_p * (p_I - p_d_I)
+        s = v_I - v_r
+        a = -k_d * s + np.array([0, 0, 9.81]) - k_I * self.a_adapt
+        self.a_adapt = self.a_adapt + s * dt
         f = self.m * a
         f_b = scipy.spatial.transform.Rotation.from_quat([q[1], q[2], q[3], q[0]]).as_matrix().T @ f
         thrust = np.max([0, f_b[2]])
@@ -152,7 +158,7 @@ CONTROL_FREQUENCY = 200 # Hz for attitude control loop
 dt = 1.0 / CONTROL_FREQUENCY
 time = [0.0]
 
-def get_pos_full_quadcopter(quad):
+def get_pos_full_quadcopter(quad : Robot):
     """ position returns a 3 x 6 matrix 
         where row is [x, y, z] column is m1 m2 m3 m4 origin h
     """
@@ -165,13 +171,24 @@ def get_pos_full_quadcopter(quad):
     pos_full_quad = quadWorldFrame[0:3]
     return pos_full_quad
 
-def control_propellers(quad):
+def control_propellers(quad : Robot):
     t = quad.time
     T = 1.5
     r = 2*np.pi * t / T
-    prop_thrusts = quad.control(p_d_I = np.array([np.cos(r/2), np.sin(r), 0.0]))
+    # prop_thrusts = quad.control(p_d_I = np.array([np.cos(r/2), np.sin(r), 0.0]))
     # Note: for Hover mode, just replace the desired trajectory with [1, 0, 1]
-    quad.update(prop_thrusts, dt)
+
+    # Part 2.1
+    # prop_thrusts = np.array([100, 0, 100, 0])
+    # quad.update(prop_thrusts, dt)
+    F_wind = np.zeros(3)
+    if t > 4.0:
+        print(t)
+        F_wind = np.array([10.0, 0, 0])
+
+    # Part 2.2
+    prop_thrusts = quad.control(p_d_I = np.array([0, 0, 0]))
+    quad.update(prop_thrusts, dt, F_wind)
 
 def main():
     quadcopter = Robot()
