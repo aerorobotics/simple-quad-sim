@@ -95,7 +95,6 @@ class Robot:
         thrust = self.constant_thrust * np.sum(omegas_motor**2)
         f_b = np.array([0, 0, thrust])
 
-        
         tau_x = self.constant_thrust * (omegas_motor[3]**2 - omegas_motor[1]**2) * 2 * self.arm_length
         tau_y = self.constant_thrust * (omegas_motor[2]**2 - omegas_motor[0]**2) * 2 * self.arm_length
         tau_z = self.constant_drag * (omegas_motor[0]**2 - omegas_motor[1]**2 + omegas_motor[2]**2 - omegas_motor[3]**2)
@@ -177,13 +176,9 @@ def control_propellers(quad : Robot):
     r = 2*np.pi * t / T
     # prop_thrusts = quad.control(p_d_I = np.array([np.cos(r/2), np.sin(r), 0.0]))
     # Note: for Hover mode, just replace the desired trajectory with [1, 0, 1]
-
-    # Part 2.1
-    # prop_thrusts = np.array([100, 0, 100, 0])
-    # quad.update(prop_thrusts, dt)
     F_wind = np.zeros(3)
-    if t > 4.0:
-        print(t)
+    if t > 2.0:
+        print("Wind is blowing!")
         F_wind = np.array([10.0, 0, 0])
 
     # Part 2.2
